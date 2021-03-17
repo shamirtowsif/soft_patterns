@@ -45,13 +45,7 @@ def normalize(data):
 
 
 class Semiring:
-    def __init__(self,
-                 zero,
-                 one,
-                 plus,
-                 times,
-                 from_float,
-                 to_float):
+    def __init__(self, zero, one, plus, times, from_float, to_float):
         self.zero = zero
         self.one = one
         self.plus = plus
@@ -62,39 +56,6 @@ class Semiring:
 
 def neg_infinity(*sizes):
     return -100 * ones(*sizes)  # not really -inf, shh
-
-
-# element-wise plus, times
-ProbSemiring = \
-    Semiring(
-        zeros,
-        ones,
-        torch.add,
-        torch.mul,
-        sigmoid,
-        identity
-    )
-
-# element-wise max, plus
-MaxPlusSemiring = \
-    Semiring(
-        neg_infinity,
-        zeros,
-        torch.max,
-        torch.add,
-        identity,
-        identity
-    )
-# element-wise max, times. in log-space
-LogSpaceMaxTimesSemiring = \
-    Semiring(
-        neg_infinity,
-        zeros,
-        torch.max,
-        torch.add,
-        lambda x: torch.log(torch.sigmoid(x)),
-        torch.exp
-    )
 
 SHARED_SL_PARAM_PER_STATE_PER_PATTERN = 1
 SHARED_SL_SINGLE_PARAM = 2
@@ -719,7 +680,7 @@ def main():
 
     print("num_classes:", num_classes)
     rnn = None
-    semiring = ProbSemiring
+    semiring = Semiring(zeros, ones, torch.add, torch.mul, sigmoid, identity)
 
     model = SoftPatternClassifier(pattern_specs, mlp_hidden_dim, num_mlp_layers, num_classes, embeddings, vocab, semiring, 0.1, False, rnn, pre_computed_patterns, False, 0, False, None, None)
 

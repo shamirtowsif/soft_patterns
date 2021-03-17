@@ -4,8 +4,10 @@ Script to evaluate the accuracy of a model.
 """
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import OrderedDict
-from soft_patterns import MaxPlusSemiring, LogSpaceMaxTimesSemiring, evaluate_accuracy, SoftPatternClassifier, ProbSemiring
-
+from soft_patterns import evaluate_accuracy, SoftPatternClassifier, Semiring
+from torch import FloatTensor, LongTensor, cat, mm, norm, randn, zeros, ones
+from torch.nn.functional import sigmoid, log_softmax
+from util import shuffled_chunked_sorted, identity, chunked_sorted, to_cuda, right_pad
 from baselines.cnn import PooledCnnClassifier, max_pool_seq, cnn_arg_parser
 from baselines.dan import DanClassifier
 from baselines.lstm import AveragingRnnClassifier
@@ -50,7 +52,7 @@ def main():
     num_classes = len(set(dev_labels))
     print("num_classes:", num_classes)
 
-    semiring = ProbSemiring
+    semiring = Semiring(zeros, ones, torch.add, torch.mul, sigmoid, identity)
 
     rnn = None
 
