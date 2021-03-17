@@ -20,8 +20,7 @@ from torch.nn.utils.rnn import pad_packed_sequence
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from rnn import lstm_arg_parser, Rnn
-from data import read_embeddings, read_docs, read_labels, vocab_from_text, Vocab, UNK_IDX, START_TOKEN_IDX, \
-    END_TOKEN_IDX
+from data import read_embeddings, read_docs, read_labels, vocab_from_text, Vocab, UNK_IDX, START_TOKEN_IDX, END_TOKEN_IDX
 from mlp import MLP, mlp_arg_parser
 from util import shuffled_chunked_sorted, identity, chunked_sorted, to_cuda, right_pad
 
@@ -376,8 +375,9 @@ class SoftPatternClassifier(Module):
                                                            num_patterns,
                                                            self.max_pattern_length)))
         # set start state (0) to 1 for each pattern in each doc
-        hiddens[:, :, 0] = self.to_cuda(self.semiring.one(batch_size, num_patterns, 1))
-
+        # print("executed")
+        # exit(0)
+        hiddens[:, :, 0] = self.to_cuda(self.semiring.one(num_patterns, batch_size, 1)).squeeze()
         if debug % 4 == 3:
             all_hiddens = [hiddens[0, :, :]]
         for i, transition_matrix in enumerate(transition_matrices):
@@ -661,219 +661,76 @@ def train(train_data,
     return model
 
 
-def main(args):
-    print(args)
-
-    pattern_specs = OrderedDict(sorted(([int(y) for y in x.split("-")] for x in args.patterns.split("_")),
-                                key=lambda t: t[0]))
+def main():
+    patterns = "5-50_4-50_3-50_2-50"
+    pattern_specs = OrderedDict(sorted(([int(y) for y in x.split("-")] for x in patterns.split("_")), key=lambda t: t[0]))
 
     pre_computed_patterns = None
+    n = None
+    mlp_hidden_dim = 25
+    num_mlp_layers = 2
 
-    if args.pre_computed_patterns is not None:
-        pre_computed_patterns = read_patterns(args.pre_computed_patterns, pattern_specs)
-        pattern_specs = OrderedDict(sorted(pattern_specs.items(), key=lambda t: t[0]))
+    seed = 100
+    #Sets the seed for generating random numbers.
+    torch.manual_seed(seed)
+    #This method is called when RandomState is initialized.
+    np.random.seed(seed)
 
-    n = args.num_train_instances
-    mlp_hidden_dim = args.mlp_hidden_dim
-    num_mlp_layers = args.num_mlp_layers
-
-    if args.seed != -1:
-        torch.manual_seed(args.seed)
-        np.random.seed(args.seed)
-
-    dev_vocab = vocab_from_text(args.vd)
+    validation_data_file = "./soft_patterns/data/dev.data"
+    dev_vocab = vocab_from_text(validation_data_file)
+    # print(dev_vocab.index)
     print("Dev vocab size:", len(dev_vocab))
-    train_vocab = vocab_from_text(args.td)
+    # exit(0)
+    train_data_file = "./soft_patterns/data/train.data"
+    train_vocab = vocab_from_text(train_data_file)
     print("Train vocab size:", len(train_vocab))
     dev_vocab |= train_vocab
 
-    vocab, embeddings, word_dim = \
-        read_embeddings(args.embedding_file, dev_vocab)
+
+    embedding_file='./soft_patterns/glove.6B.50d.txt'
+    vocab, embeddings, word_dim = read_embeddings(embedding_file, dev_vocab)
 
     num_padding_tokens = max(list(pattern_specs.keys())) - 1
+    # print(num_padding_tokens)
+    # exit(0)
 
-    dev_input, _ = read_docs(args.vd, vocab, num_padding_tokens=num_padding_tokens)
-    dev_labels = read_labels(args.vl)
+    dev_input, _ = read_docs(validation_data_file, vocab, num_padding_tokens=num_padding_tokens)
+    validation_label_file = "./soft_patterns/data/dev.labels"
+    dev_labels = read_labels(validation_label_file)
     dev_data = list(zip(dev_input, dev_labels))
 
-    np.random.shuffle(dev_data)
-    num_iterations = args.num_iterations
+    # print(dev_data[50][0])
+    # print(len(dev_data[50][0]))
+    # exit(0)
 
-    train_input, _ = read_docs(args.td, vocab, num_padding_tokens=num_padding_tokens)
-    train_labels = read_labels(args.tl)
+    np.random.shuffle(dev_data)
+    num_iterations = 10
+
+    train_input, _ = read_docs(train_data_file, vocab, num_padding_tokens=num_padding_tokens)
+    train_labels_file = "./soft_patterns/data/train.labels"
+    train_labels = read_labels(train_labels_file)
 
     print("training instances:", len(train_input))
 
     num_classes = len(set(train_labels))
 
-    # truncate data (to debug faster)
     train_data = list(zip(train_input, train_labels))
     np.random.shuffle(train_data)
 
     print("num_classes:", num_classes)
+    rnn = None
+    semiring = ProbSemiring
 
-    if n is not None:
-        train_data = train_data[:n]
-        dev_data = dev_data[:n]
+    model = SoftPatternClassifier(pattern_specs, mlp_hidden_dim, num_mlp_layers, num_classes, embeddings, vocab, semiring, 0.1, False, rnn, pre_computed_patterns, False, 0, False, None, None)
 
-    if args.use_rnn:
-        rnn = Rnn(word_dim,
-                  args.hidden_dim,
-                  cell_type=LSTM,
-                  gpu=args.gpu)
-    else:
-        rnn = None
-
-    semiring = \
-        MaxPlusSemiring if args.maxplus else (
-            LogSpaceMaxTimesSemiring if args.maxtimes else ProbSemiring
-        )
-
-    model = SoftPatternClassifier(pattern_specs,
-                                  mlp_hidden_dim,
-                                  num_mlp_layers,
-                                  num_classes,
-                                  embeddings,
-                                  vocab,
-                                  semiring,
-                                  args.bias_scale_param,
-                                  args.gpu,
-                                  rnn,
-                                  pre_computed_patterns,
-                                  args.no_sl,
-                                  args.shared_sl,
-                                  args.no_eps,
-                                  args.eps_scale,
-                                  args.self_loop_scale)
-
-    if args.gpu:
-        model.to_cuda(model)
-
-    model_file_prefix = 'model'
-    # Loading model
-    if args.input_model is not None:
-        state_dict = torch.load(args.input_model)
-        model.load_state_dict(state_dict)
-        model_file_prefix = 'model_retrained'
-
-    model_save_dir = args.model_save_dir
-
-    if model_save_dir is not None:
-        if not os.path.exists(model_save_dir):
-            os.makedirs(model_save_dir)
+    model_file_prefix = "model"
+    model_save_dir = "./soft_patterns/output/"
 
     print("Training with", model_file_prefix)
 
-    train(train_data,
-          dev_data,
-          model,
-          num_classes,
-          model_save_dir,
-          num_iterations,
-          model_file_prefix,
-          args.learning_rate,
-          args.batch_size,
-          args.scheduler,
-          args.gpu,
-          args.clip,
-          args.max_doc_len,
-          args.debug,
-          args.dropout,
-          args.word_dropout,
-          args.patience)
+    train(train_data, dev_data, model, num_classes, model_save_dir, num_iterations, model_file_prefix, 0.001, 1, False, False, None, -1,0,0,0, 30)
 
     return 0
 
-
-def read_patterns(ifile, pattern_specs):
-    with open(ifile, encoding='utf-8') as ifh:
-        pre_computed_patterns = [l.rstrip().split() for l in ifh if len(l.rstrip())]
-
-    for p in pre_computed_patterns:
-        l = len(p) + 1
-
-        if l not in pattern_specs:
-            pattern_specs[l] = 1
-        else:
-            pattern_specs[l] += 1
-
-    return pre_computed_patterns
-
-
-def soft_pattern_arg_parser():
-    """ CLI args related to SoftPatternsClassifier """
-    p = ArgumentParser(add_help=False,
-                       parents=[lstm_arg_parser(), mlp_arg_parser()])
-    p.add_argument("-u", "--use_rnn", help="Use an RNN underneath soft-patterns", action="store_true")
-    p.add_argument("-p", "--patterns",
-                   help="Pattern lengths and numbers: an underscore separated list of length-number pairs",
-                   default="5-50_4-50_3-50_2-50")
-    p.add_argument("--maxplus",
-                   help="Use max-plus semiring instead of plus-times",
-                   default=False, action='store_true')
-    p.add_argument("--maxtimes",
-                   help="Use max-times semiring instead of plus-times",
-                   default=False, action='store_true')
-    p.add_argument("--bias_scale_param",
-                   help="Scale bias term by this parameter",
-                   default=0.1, type=float)
-    p.add_argument("--eps_scale",
-                   help="Scale epsilon by this parameter",
-                   default=None, type=float)
-    p.add_argument("--self_loop_scale",
-                   help="Scale self_loop by this parameter",
-                   default=None, type=float)
-    p.add_argument("--no_eps", help="Don't use epsilon transitions", action='store_true')
-    p.add_argument("--no_sl", help="Don't use self loops", action='store_true')
-    p.add_argument("--shared_sl",
-                   help="Share main path and self loop parameters, where self loops are discounted by a self_loop_parameter. "+
-                           str(SHARED_SL_PARAM_PER_STATE_PER_PATTERN)+
-                           ": one parameter per state per pattern, "+str(SHARED_SL_SINGLE_PARAM)+
-                           ": a global parameter.", type=int, default=0)
-
-    return p
-
-
-
-
-def training_arg_parser():
-    """ CLI args related to training models. """
-    p = ArgumentParser(add_help=False)
-    p.add_argument("-i", "--num_iterations", help="Number of iterations", type=int, default=10)
-    p.add_argument("--patience", help="Patience parameter (for early stopping)", type=int, default=30)
-    p.add_argument("-m", "--model_save_dir", help="where to save the trained model")
-    p.add_argument("-r", "--scheduler", help="Use reduce learning rate on plateau schedule", action='store_true')
-    p.add_argument("-w", "--word_dropout", help="Use word dropout", type=float, default=0)
-    p.add_argument("--td", help="Train data file", required=True)
-    p.add_argument("--tl", help="Train labels file", required=True)
-    p.add_argument("--pre_computed_patterns", help="File containing pre-computed patterns")
-    p.add_argument("-l", "--learning_rate", help="Adam Learning rate", type=float, default=1e-3)
-    p.add_argument("--clip", help="Gradient clipping", type=float, default=None)
-    p.add_argument("--debug", help="Debug", type=int, default=0)
-    return p
-
-def general_arg_parser():
-    """ CLI args related to training and testing models. """
-    p = ArgumentParser(add_help=False)
-    p.add_argument("-b", "--batch_size", help="Batch size", type=int, default=1)
-    p.add_argument("--max_doc_len",
-                   help="Maximum doc length. For longer documents, spans of length max_doc_len will be randomly "
-                        "selected each iteration (-1 means no restriction)",
-                   type=int, default=-1)
-    p.add_argument("-s", "--seed", help="Random seed", type=int, default=100)
-    p.add_argument("-n", "--num_train_instances", help="Number of training instances", type=int, default=None)
-    p.add_argument("--vd", help="Validation data file", required=True)
-    p.add_argument("--vl", help="Validation labels file", required=True)
-    p.add_argument("--input_model", help="Input model (to run test and not train)")
-    p.add_argument("-t", "--dropout", help="Use dropout", type=float, default=0)
-    p.add_argument("-g", "--gpu", help="Use GPU", action='store_true')
-    p.add_argument("-e", "--embedding_file", help="Word embedding file", required=True)
-
-    return p
-
-
 if __name__ == '__main__':
-    parser = ArgumentParser(description=__doc__,
-                            formatter_class=ArgumentDefaultsHelpFormatter,
-                            parents=[soft_pattern_arg_parser(), training_arg_parser(), general_arg_parser()])
-    sys.exit(main(parser.parse_args()))
+    main()

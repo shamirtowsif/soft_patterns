@@ -19,7 +19,6 @@ example usage:
 
 import argparse
 import sys; sys.path.append(".")
-from soft_patterns import train, training_arg_parser, general_arg_parser
 from torch.nn.utils.rnn import pad_packed_sequence
 from rnn import lstm_arg_parser, Rnn
 import numpy as np

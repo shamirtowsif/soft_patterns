@@ -1,4 +1,6 @@
 /experiments/
+/glove.6B.50d.txt
+/output
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
