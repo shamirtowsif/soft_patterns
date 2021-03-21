@@ -110,23 +110,7 @@ class SoftPatternClassifier(Module):
     A text classification model that feeds the document scores from a bunch of
     soft patterns into an MLP
     """
-    def __init__(self,
-                 pattern_specs,
-                 mlp_hidden_dim,
-                 num_mlp_layers,
-                 num_classes,
-                 embeddings,
-                 vocab,
-                 semiring,
-                 bias_scale_param,
-                 gpu=False,
-                 rnn=None,
-                 pre_computed_patterns=None,
-                 no_sl=False,
-                 shared_sl=False,
-                 no_eps=False,
-                 eps_scale=None,
-                 self_loop_scale=None):
+    def __init__(self, pattern_specs, mlp_hidden_dim, num_mlp_layers, num_classes, embeddings, vocab, semiring, bias_scale_param, gpu=False, rnn=None, pre_computed_patterns=None, no_sl=False, shared_sl=False, no_eps=False, eps_scale=None, self_loop_scale=None):
         super(SoftPatternClassifier, self).__init__()
         self.semiring = semiring
         self.vocab = vocab
@@ -315,6 +299,11 @@ class SoftPatternClassifier(Module):
 
         self_loop_scale = None
 
+        print(f"self.shared_sl: {self.shared_sl}")
+        print(f"self.no_sl: {self.no_sl}")
+        print(f"self.self_loop_scale: {self.self_loop_scale}")
+        # exit(0)
+
         if self.shared_sl:
             self_loop_scale = self.semiring.from_float(self.self_loop_scale)
         elif not self.no_sl:
@@ -324,6 +313,13 @@ class SoftPatternClassifier(Module):
         num_patterns = self.total_num_patterns
         scores = self.to_cuda(fixed_var(self.semiring.zero(batch_size, num_patterns)))
 
+        print(f"batch_size: {batch_size}")
+        print(f"num_patterns: {num_patterns}")
+        print(f"self.semiring.zero(batch_size, num_patterns): {self.semiring.zero(batch_size, num_patterns)}")
+        print(f"fixed_var(self.semiring.zero(batch_size, num_patterns)): {fixed_var(self.semiring.zero(batch_size, num_patterns))}")
+        print(f"self.to_cuda(fixed_var(self.semiring.zero(batch_size, num_patterns))): {self.to_cuda(fixed_var(self.semiring.zero(batch_size, num_patterns)))}")
+
+
         # to add start state for each word in the document.
         restart_padding = self.to_cuda(fixed_var(self.semiring.one(batch_size, num_patterns, 1)))
 
@@ -332,22 +328,15 @@ class SoftPatternClassifier(Module):
         eps_value = self.get_eps_value()
 
         batch_end_state_idxs = self.end_states.expand(batch_size, num_patterns, 1)
-        hiddens = self.to_cuda(Variable(self.semiring.zero(batch_size,
-                                                           num_patterns,
-                                                           self.max_pattern_length)))
+        print(f"self.end_states.expand(batch_size, num_patterns, 1): {self.end_states.expand(batch_size, num_patterns, 1)}")
+        exit(0)
+        hiddens = self.to_cuda(Variable(self.semiring.zero(batch_size, num_patterns, self.max_pattern_length)))
         # set start state (0) to 1 for each pattern in each doc
-        # print("executed")
-        # exit(0)
         hiddens[:, :, 0] = self.to_cuda(self.semiring.one(num_patterns, batch_size, 1)).squeeze()
         if debug % 4 == 3:
             all_hiddens = [hiddens[0, :, :]]
         for i, transition_matrix in enumerate(transition_matrices):
-            hiddens = self.transition_once(eps_value,
-                                           hiddens,
-                                           transition_matrix,
-                                           zero_padding,
-                                           restart_padding,
-                                           self_loop_scale)
+            hiddens = self.transition_once(eps_value, hiddens, transition_matrix, zero_padding,restart_padding, self_loop_scale)
             if debug % 4 == 3:
                 all_hiddens.append(hiddens[0, :, :])
 
@@ -355,11 +344,11 @@ class SoftPatternClassifier(Module):
             end_state_vals = torch.gather(hiddens, 2, batch_end_state_idxs).view(batch_size, num_patterns)
             # but only update score when we're not already past the end of the doc
             active_doc_idxs = torch.nonzero(torch.gt(batch.doc_lens, i)).squeeze()
-            scores[active_doc_idxs] = \
-                self.semiring.plus(
-                    scores[active_doc_idxs],
-                    end_state_vals[active_doc_idxs]
-                )
+            scores[active_doc_idxs] = self.semiring.plus(
+                scores[active_doc_idxs],
+                end_state_vals[active_doc_idxs]
+            )
+
 
         if debug:
             time3 = monotonic()
@@ -375,18 +364,13 @@ class SoftPatternClassifier(Module):
             return self.mlp.forward(scores)
 
     def get_eps_value(self):
-        return None if self.no_eps else self.semiring.times(
-            self.epsilon_scale,
-            self.semiring.from_float(self.epsilon)
-        )
+        print(f"self.no_eps: {self.no_eps}")
+        print(f"self.epsilon_scale: {self.epsilon_scale}")
+        print(f"self.epsilon: {self.epsilon}")
+        # exit(0)
+        return None if self.no_eps else self.semiring.times(self.epsilon_scale,self.semiring.from_float(self.epsilon))
 
-    def transition_once(self,
-                        eps_value,
-                        hiddens,
-                        transition_matrix_val,
-                        zero_padding,
-                        restart_padding,
-                        self_loop_scale):
+    def transition_once(self, eps_value, hiddens, transition_matrix_val, zero_padding, restart_padding, self_loop_scale):
         # Adding epsilon transitions (don't consume a token, move forward one state)
         # We do this before self-loops and single-steps.
         # We only allow zero or one epsilon transition in a row.
@@ -478,47 +462,25 @@ def evaluate_accuracy(model, data, batch_size, gpu, debug=0):
     print("num predicted 1s:", num_1s)
     print("num gold 1s:     ", sum(gold == 1 for _, gold in data))
 
-    return correct / n
+    return correct / nbatch
 
 
-def train(train_data,
-          dev_data,
-          model,
-          num_classes,
-          model_save_dir,
-          num_iterations,
-          model_file_prefix,
-          learning_rate,
-          batch_size,
-          run_scheduler=False,
-          gpu=False,
-          clip=None,
-          max_len=-1,
-          debug=0,
-          dropout=0,
-          word_dropout=0,
-          patience=1000):
+def train(train_data, dev_data, model, num_classes, model_save_dir, num_iterations, model_file_prefix, learning_rate, batch_size, run_scheduler=False, gpu=False, clip=None, max_len=-1, debug=0, dropout=0, word_dropout=0, patience=1000):
     """ Train a model on all the given docs """
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
+    # The negative log likelihood loss. It is useful to train a classification problem with C classes.
     loss_function = NLLLoss(None, False)
 
     enable_gradient_clipping(model, clip)
 
-    if dropout:
-        dropout = torch.nn.Dropout(dropout)
-    else:
-        dropout = None
+    dropout = None
 
     debug_print = int(100 / batch_size) + 1
 
     writer = None
 
-    if model_save_dir is not None:
-        writer = SummaryWriter(os.path.join(model_save_dir, "logs"))
-
-    if run_scheduler:
-        scheduler = ReduceLROnPlateau(optimizer, 'min', 0.1, 10, True)
+    writer = SummaryWriter(os.path.join(model_save_dir, "logs"))
 
     best_dev_loss = 100000000
     best_dev_loss_index = -1
@@ -543,6 +505,9 @@ def train(train_data,
 
         if writer is not None:
             for name, param in model.named_parameters():
+                print(f"name: {name}")
+                print(f"param: {param}")
+                exit(0)
                 writer.add_scalar("parameter_mean/" + name,
                                   param.data.mean(),
                                   it)
@@ -652,17 +617,11 @@ def main():
     vocab, embeddings, word_dim = read_embeddings(embedding_file, dev_vocab)
 
     num_padding_tokens = max(list(pattern_specs.keys())) - 1
-    # print(num_padding_tokens)
-    # exit(0)
 
     dev_input, _ = read_docs(validation_data_file, vocab, num_padding_tokens=num_padding_tokens)
     validation_label_file = "./soft_patterns/data/dev.labels"
     dev_labels = read_labels(validation_label_file)
     dev_data = list(zip(dev_input, dev_labels))
-
-    # print(dev_data[50][0])
-    # print(len(dev_data[50][0]))
-    # exit(0)
 
     np.random.shuffle(dev_data)
     num_iterations = 10
