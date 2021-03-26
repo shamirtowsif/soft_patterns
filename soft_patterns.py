@@ -329,7 +329,6 @@ class SoftPatternClassifier(Module):
 
         batch_end_state_idxs = self.end_states.expand(batch_size, num_patterns, 1)
         print(f"self.end_states.expand(batch_size, num_patterns, 1): {self.end_states.expand(batch_size, num_patterns, 1)}")
-        exit(0)
         hiddens = self.to_cuda(Variable(self.semiring.zero(batch_size, num_patterns, self.max_pattern_length)))
         # set start state (0) to 1 for each pattern in each doc
         hiddens[:, :, 0] = self.to_cuda(self.semiring.one(num_patterns, batch_size, 1)).squeeze()
@@ -468,6 +467,9 @@ def evaluate_accuracy(model, data, batch_size, gpu, debug=0):
 def train(train_data, dev_data, model, num_classes, model_save_dir, num_iterations, model_file_prefix, learning_rate, batch_size, run_scheduler=False, gpu=False, clip=None, max_len=-1, debug=0, dropout=0, word_dropout=0, patience=1000):
     """ Train a model on all the given docs """
 
+    parameters = model.parameters()
+    print(f"parameters: {parameters}")
+    exit(0)
     optimizer = Adam(model.parameters(), lr=learning_rate)
     # The negative log likelihood loss. It is useful to train a classification problem with C classes.
     loss_function = NLLLoss(None, False)
